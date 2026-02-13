@@ -1,4 +1,3 @@
-# Pneumonia-Classification-with-ResNet18
 
 # 🩺 Pneumonia Classification with ResNet18
 
