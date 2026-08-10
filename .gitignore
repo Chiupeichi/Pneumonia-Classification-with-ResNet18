@@ -1,0 +1,20 @@
+.DS_Store
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ipynb_checkpoints/
+*.ipynb
+.venv/
+venv/
+outputs/
+checkpoints/
+*.log
+*.pth
+
+# Medical image datasets are local and may contain sensitive data.
+chest_xray/
+CXR_png/
+masks/
+data/raw/
+data/*.csv
+db/*.sqlite
