@@ -1,35 +1,100 @@
-# Chest X-ray：肺炎分類與肺部分割
+# Chest X-ray Intelligence
 
-這個 repository 將原本的 Notebook 整理成兩個可重用、可測試的 PyTorch 專案：
+### Pneumonia Classification with ResNet-18 · Lung Segmentation with U-Net
 
-- `classification/`：使用預訓練 ResNet-18 判斷 Normal / Pneumonia。
-- `segmentation/`：使用 U-Net 產生肺部二值遮罩。
+[![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![PyTorch](https://img.shields.io/badge/PyTorch-2.3%2B-EE4C2C?logo=pytorch&logoColor=white)](https://pytorch.org/)
+[![Computer Vision](https://img.shields.io/badge/Domain-Medical%20Computer%20Vision-5B5BD6)](#)
 
-原始 Notebook 與既有 `.pth` 權重會保留在本機，方便比對與相容舊模型，但不會提交到公開 repository。`data/`、`db/` 與本機路徑相關的實驗檔案也不會上傳，以免公開影像、資料位置或病人層級 metadata。這是研究／教學用途的影像模型，不應直接用於臨床診斷。
+An end-to-end medical imaging portfolio project that combines two complementary deep-learning tasks:
 
-## 主要改善
+- **Classification** — identify chest X-rays as `NORMAL` or `PNEUMONIA` with transfer learning.
+- **Segmentation** — isolate lung regions at pixel level for downstream image analysis.
 
-### Classification
+The original experiments were developed in Jupyter notebooks and then refactored into reusable, testable PyTorch modules with command-line training and inference workflows.
 
-- 訓練和推論共用相同的灰階三通道、尺寸與 ImageNet normalization，修正舊推論流程的 preprocessing mismatch。
-- 自動檢查三個 split 的類別映射，避免標籤索引悄悄顛倒。
-- 依訓練集類別數量加權 loss，改善常見的肺炎資料不平衡。
-- 加入 AdamW、learning-rate scheduler、early stopping、CUDA mixed precision 與原子化 checkpoint。
-- checkpoint 會保存 `class_to_idx` 和 preprocessing metadata；也相容原本只保存 state dict 的模型。
+## Results at a Glance
 
-### Segmentation
+| Task | Architecture | Evaluation result |
+|---|---|---|
+| Pneumonia classification | Pretrained ResNet-18 | **ROC-AUC 0.9462** · F1 0.8568 · Accuracy 79.17% |
+| Lung segmentation | U-Net | **Best validation IoU 0.887** |
 
-- U-Net 統一輸出 logits，只在 loss／metric／推論處做 sigmoid，避免重複 sigmoid。
-- mask resize 和 rotation 強制使用 nearest-neighbor，避免產生不存在的灰階標籤。
-- 使用 BCE + Dice loss，並同時回報 Dice 與 IoU。
-- 同時支援 `image.png`／`image.png` 與 `image.png`／`image_mask.png` 兩種配對方式，避免漏掉 China CXR masks。
-- 固定 seed 且建立互斥的 train/validation split，結果可以重現。
-- 預測 mask 會還原到原圖尺寸，也能另外輸出彩色 overlay。
-- 可直接載入原本 `lung_unet_model.pth` 的 layer names。
+*Metrics are reproduced from the saved outputs of the original notebook experiments.*
 
-## 安裝
+## Classification Results
 
-建議使用 Python 3.10–3.12 建立獨立環境：
+The classifier was fine-tuned from ImageNet weights and evaluated on 624 test X-rays. Its ROC-AUC of **0.9462** shows strong ranking performance across the two classes.
+
+<p align="center">
+  <img src="assets/classification_roc_curve.png" width="48%" alt="Pneumonia classifier ROC curve with AUC 0.946">
+  <img src="assets/classification_confusion_matrix.png" width="48%" alt="Pneumonia classifier confusion matrix">
+</p>
+
+### Representative Predictions
+
+The following predictions come directly from the notebook test run. Both correct predictions and false-positive cases are shown to make model behavior visible.
+
+![Representative chest X-ray classification predictions](assets/classification_predictions.png)
+
+## Segmentation Results
+
+The U-Net learns a binary lung mask from grayscale chest X-rays. Validation examples below show the input image, annotated ground truth, and model prediction side by side.
+
+![Input chest X-rays, ground-truth lung masks, and U-Net predictions](assets/segmentation_validation_examples.png)
+
+The recorded 10-epoch experiment reached its best validation IoU of **0.887** at epoch 7. The refactored data loader also recognizes both `image.png` and `image_mask.png` naming conventions, making all **704 available image–mask pairs** discoverable.
+
+## System Design
+
+### Classification Pipeline
+
+```text
+Chest X-ray
+    → grayscale-to-RGB conversion
+    → augmentation + ImageNet normalization
+    → pretrained ResNet-18
+    → class-weighted cross-entropy
+    → Normal / Pneumonia probability
+```
+
+### Segmentation Pipeline
+
+```text
+Chest X-ray + lung mask
+    → paired geometric augmentation
+    → U-Net encoder–decoder with skip connections
+    → BCE + Dice loss
+    → probability map
+    → binary lung mask + optional overlay
+```
+
+## Engineering Highlights
+
+- Shared preprocessing between classification training and inference.
+- Class-weighted loss for the imbalanced pneumonia dataset.
+- Mask-safe nearest-neighbor interpolation during segmentation augmentation.
+- AdamW, learning-rate scheduling, early stopping, and CUDA mixed precision.
+- Reproducible dataset splitting and automatic CUDA / Apple MPS / CPU selection.
+- Atomic checkpoints containing class mapping and preprocessing metadata.
+- Backward-compatible loading of the original ResNet and U-Net checkpoints.
+- Automated tests for model shapes, metrics, dataset splitting, and train/eval loops.
+
+## Repository Structure
+
+```text
+.
+├── assets/            # Portfolio result figures
+├── classification/    # ResNet-18 data, model, training, evaluation, inference
+├── segmentation/      # U-Net data, model, loss, metrics, training, inference
+├── tests/             # Unit and smoke tests
+├── common.py          # Device, seed, and checkpoint utilities
+└── requirements.txt
+```
+
+## Quick Start
+
+### 1. Install
 
 ```bash
 python -m venv .venv
@@ -37,21 +102,9 @@ source .venv/bin/activate
 python -m pip install -r requirements.txt
 ```
 
-## Classification
+### 2. Train the classifier
 
-資料夾需使用 `ImageFolder` 格式，三個 split 的類別名稱必須一致：
-
-```text
-chest_xray/
-├── train/NORMAL/...
-├── train/PNEUMONIA/...
-├── val/NORMAL/...
-├── val/PNEUMONIA/...
-├── test/NORMAL/...
-└── test/PNEUMONIA/...
-```
-
-訓練：
+The classification dataset follows the standard `ImageFolder` layout with `train`, `val`, and `test` splits, each containing `NORMAL` and `PNEUMONIA` directories.
 
 ```bash
 python -m classification.train \
@@ -59,50 +112,44 @@ python -m classification.train \
   --output checkpoints/classification_best.pth
 ```
 
-使用新 checkpoint 推論；若要使用舊權重，請自行放到 repository 根目錄或指定其本機路徑：
+### 3. Run classification inference
 
 ```bash
 python -m classification.predict /path/to/xray.jpeg \
-  --checkpoint pneumonia_resnet_model.pth
+  --checkpoint checkpoints/classification_best.pth
 ```
 
-## Segmentation
-
-影像和 mask 必須位於不同資料夾；mask 可使用完全相同檔名，或在副檔名前加 `_mask`：
+### 4. Train the segmenter
 
 ```bash
 python -m segmentation.train \
-  --images '/path/to/CXR_png' \
-  --masks '/path/to/masks' \
+  --images /path/to/CXR_png \
+  --masks /path/to/masks \
   --output checkpoints/segmentation_best.pth
 ```
 
-輸出 mask 與 overlay：
+### 5. Generate a mask and overlay
 
 ```bash
 python -m segmentation.predict /path/to/xray.png \
-  --checkpoint lung_unet_model.pth \
+  --checkpoint checkpoints/segmentation_best.pth \
   --output outputs/lung_mask.png \
   --overlay outputs/lung_overlay.png
 ```
 
-`--device auto` 會依序選擇 CUDA、Apple Silicon MPS、CPU。若 DataLoader 在 Notebook 或 macOS 多程序環境出錯，維持預設 `--workers 0` 即可。
+## Datasets
 
-## 驗證
+- [Chest X-Ray Images (Pneumonia)](https://www.kaggle.com/datasets/paultimothymooney/chest-xray-pneumonia) — 5,856 pediatric chest X-rays organized into Normal and Pneumonia classes.
+- [Chest Xray Masks and Labels](https://www.kaggle.com/datasets/nikhilpandey360/chest-xray-masks-and-labels) — 800 chest X-rays with 704 available lung masks.
+
+All images shown in this repository come from these public Kaggle datasets and are de-identified.
+
+## Validation
 
 ```bash
 python -m compileall classification segmentation common.py
 pytest -q
+mypy --ignore-missing-imports common.py classification segmentation
 ```
 
-## 專案結構
-
-```text
-classification/   # ResNet model、data pipeline、train/eval、predict CLI
-segmentation/     # U-Net model、paired dataset、loss/metrics、train/predict CLI
-tests/            # reproducibility、shape、loss 與 metric 測試
-data/             # 原始 metadata 與 split（路徑欄位需依本機資料位置更新）
-db/               # 原始 SQLite metadata
-*.ipynb           # 舊版 Notebook（只保留在本機，不上傳）
-*.pth             # 模型權重（只保留在本機，不上傳）
-```
+> This project is intended for research and portfolio demonstration, not clinical diagnosis.
